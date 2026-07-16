@@ -3,7 +3,7 @@ firmware = "build --release --target thumbv6m-none-eabi --features firmware --bi
 flash = "run --release --target thumbv6m-none-eabi --features firmware --bin whitenoise"
 
 [target.thumbv6m-none-eabi]
-runner = "picotool load -v -x"
+runner = "elf2uf2-rs -d"
 
 [env]
 DEFMT_LOG = "info"

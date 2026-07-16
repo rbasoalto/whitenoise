@@ -1,2 +1,10 @@
 [tools]
+"cargo:elf2uf2-rs" = "2.2.0"
 rust = "1.96.0"
+
+[tasks.uf2]
+description = "Build the RP2040 firmware and package it as UF2"
+run = [
+  "cargo firmware",
+  "elf2uf2-rs target/thumbv6m-none-eabi/release/whitenoise target/thumbv6m-none-eabi/release/whitenoise.uf2",
+]

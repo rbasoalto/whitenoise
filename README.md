@@ -19,12 +19,15 @@ Useful commands:
 ```sh
 mise exec -- cargo test
 mise exec -- cargo firmware
+mise run uf2
 mise exec -- cargo flash
 ```
 
 `cargo firmware` produces `target/thumbv6m-none-eabi/release/whitenoise`.
-`cargo flash` passes that ELF directly to `picotool load -v -x`; put the board
-in BOOTSEL mode first.
+`mise run uf2` converts it to
+`target/thumbv6m-none-eabi/release/whitenoise.uf2`, ready to drag onto the
+`RPI-RP2` volume. `cargo flash` uses `elf2uf2-rs -d` to copy the UF2 directly;
+put the board in BOOTSEL mode first. Neither path requires `picotool`.
 
 ## Wiring
 
