@@ -2,5 +2,6 @@
 
 //! Host-testable signal processing and command handling for the firmware.
 
-pub const SAMPLE_RATE: u32 = 48_000;
+pub mod dsp;
 
+pub const SAMPLE_RATE: u32 = 48_000;
