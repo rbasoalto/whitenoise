@@ -1,6 +1,7 @@
 [tools]
 "cargo:elf2uf2-rs" = "2.2.0"
 rust = "1.96.0"
+"ubi:probe-rs/probe-rs" = "0.31.0"
 
 [tasks.uf2]
 description = "Build the RP2040 firmware and package it as UF2"

@@ -6,14 +6,17 @@ use core::mem;
 
 use defmt::{info, warn};
 use embassy_executor::Spawner;
+use embassy_rp::Peri;
 use embassy_rp::bind_interrupts;
 use embassy_rp::dma;
-use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
+use embassy_rp::gpio::{Level, Output};
+use embassy_rp::peripherals::{DMA_CH0, PIN_25, PIO0, USB};
 use embassy_rp::pio::{self, Pio};
 use embassy_rp::pio_programs::i2s::{PioI2sOut, PioI2sOutProgram};
 use embassy_rp::usb::{Driver, InterruptHandler as UsbInterruptHandler};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
+use embassy_time::Timer;
 use embassy_usb::UsbDevice;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
@@ -40,6 +43,7 @@ type I2s = PioI2sOut<'static, PIO0, 0>;
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let peripherals = embassy_rp::init(Default::default());
+    spawner.spawn(heartbeat_task(peripherals.PIN_25).unwrap());
 
     // MAX98357A wiring:
     //   GP0 -> BCLK, GP1 -> LRC/WS, GP2 -> DIN
@@ -89,6 +93,17 @@ async fn main(spawner: Spawner) {
 
     info!("audio and USB control ready");
     control_loop(&mut serial).await;
+}
+
+#[embassy_executor::task]
+async fn heartbeat_task(pin: Peri<'static, PIN_25>) -> ! {
+    let mut led = Output::new(pin, Level::Low);
+    loop {
+        led.set_high();
+        Timer::after_millis(100).await;
+        led.set_low();
+        Timer::after_millis(900).await;
+    }
 }
 
 #[embassy_executor::task]

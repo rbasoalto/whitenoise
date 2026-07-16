@@ -1,9 +1,10 @@
 [alias]
 firmware = "build --release --target thumbv6m-none-eabi --features firmware --bin whitenoise"
 flash = "run --release --target thumbv6m-none-eabi --features firmware --bin whitenoise"
+"flash-debug" = "run --target thumbv6m-none-eabi --features firmware --bin whitenoise"
 
 [target.thumbv6m-none-eabi]
-runner = "elf2uf2-rs -d"
+runner = "probe-rs run --chip RP2040 --protocol swd --speed 1000 --verify"
 
 [env]
 DEFMT_LOG = "info"
