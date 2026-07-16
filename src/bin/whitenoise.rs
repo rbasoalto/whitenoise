@@ -11,7 +11,7 @@ use embassy_rp::Peri;
 use embassy_rp::bind_interrupts;
 use embassy_rp::dma;
 use embassy_rp::gpio::{Input, Level, Output, Pull};
-use embassy_rp::peripherals::{DMA_CH0, PIN_14, PIN_15, PIN_25, PIO0, USB};
+use embassy_rp::peripherals::{DMA_CH0, PIN_4, PIN_5, PIN_25, PIO0, USB};
 use embassy_rp::pio::{self, Pio};
 use embassy_rp::pio_programs::i2s::{PioI2sOut, PioI2sOutProgram};
 use embassy_rp::usb::{Driver, InterruptHandler as UsbInterruptHandler};
@@ -50,7 +50,7 @@ type I2s = PioI2sOut<'static, PIO0, 0>;
 async fn main(spawner: Spawner) {
     let peripherals = embassy_rp::init(Default::default());
     spawner.spawn(heartbeat_task(peripherals.PIN_25).unwrap());
-    spawner.spawn(buttons_task(peripherals.PIN_14, peripherals.PIN_15).unwrap());
+    spawner.spawn(buttons_task(peripherals.PIN_4, peripherals.PIN_5).unwrap());
 
     // MAX98357A wiring:
     //   GP0 -> BCLK, GP1 -> LRC/WS, GP2 -> DIN
@@ -115,7 +115,7 @@ async fn heartbeat_task(pin: Peri<'static, PIN_25>) -> ! {
 }
 
 #[embassy_executor::task]
-async fn buttons_task(next_pin: Peri<'static, PIN_14>, previous_pin: Peri<'static, PIN_15>) -> ! {
+async fn buttons_task(next_pin: Peri<'static, PIN_4>, previous_pin: Peri<'static, PIN_5>) -> ! {
     let next = Input::new(next_pin, Pull::Up);
     let previous = Input::new(previous_pin, Pull::Up);
     let mut controls = ButtonControls::new();

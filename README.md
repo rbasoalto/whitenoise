@@ -68,10 +68,10 @@ external resistors are needed:
 
 | Control | Pico GPIO (physical pin) | Other button terminal |
 | --- | --- | --- |
-| `+` / next | GP14 (pin 19) | GND |
-| `-` / previous | GP15 (pin 20) | GND |
+| `+` / next | GP4 (pin 6) | GND |
+| `-` / previous | GP5 (pin 7) | GND |
 
-Pin 18 is a convenient ground beside both inputs. A short press cycles through
+Pin 8 is a convenient ground beside both inputs. A short press cycles through
 white, pink, and brown noise, wrapping at either end. Hold `+` or `-` for 600 ms
 to raise or lower volume; it changes by two percentage points every 100 ms while
 held. The inputs are debounced in firmware.
