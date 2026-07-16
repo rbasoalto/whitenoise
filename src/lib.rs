@@ -2,6 +2,7 @@
 
 //! Host-testable signal processing and command handling for the firmware.
 
+pub mod controls;
 pub mod dsp;
 pub mod protocol;
 
