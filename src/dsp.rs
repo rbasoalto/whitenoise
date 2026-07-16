@@ -294,6 +294,35 @@ mod tests {
     }
 
     #[test]
+    fn colors_become_progressively_smoother() {
+        fn roughness(color: f32) -> f64 {
+            let mut noise = ColoredNoise::new(0x1234_5678);
+            let mut previous = 0.0_f32;
+            let mut sum = 0.0_f64;
+
+            // Let the recursive filters settle before measuring sample-to-sample
+            // energy, a useful proxy for high-frequency spectral content.
+            for _ in 0..2_048 {
+                previous = noise.next(color);
+            }
+            for _ in 0..16_384 {
+                let current = noise.next(color);
+                let difference = current - previous;
+                sum += f64::from(difference * difference);
+                previous = current;
+            }
+            sum
+        }
+
+        let white = roughness(0.0);
+        let pink = roughness(1.0);
+        let brown = roughness(2.0);
+
+        assert!(white > pink, "white={white}, pink={pink}");
+        assert!(pink > brown, "pink={pink}, brown={brown}");
+    }
+
+    #[test]
     fn zero_volume_reaches_silence_without_clipping() {
         let mut chain = DspChain::new(
             48_000,
