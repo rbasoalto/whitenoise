@@ -2,6 +2,22 @@
 
 use core::f32::consts::TAU;
 
+// Audio samples use signed Q12 fixed point, leaving enough headroom for the
+// pink and brown generators. Coefficients and gains use signed Q15. Keeping
+// the sample loop to 32-bit integer multiplies is important on Cortex-M0+,
+// where floating-point operations are implemented in software.
+const SIGNAL_BITS: u32 = 12;
+const SIGNAL_ONE: i32 = 1 << SIGNAL_BITS;
+const COEFFICIENT_SCALE: f32 = 32_768.0;
+
+fn to_q15(value: f32) -> i32 {
+    (value * COEFFICIENT_SCALE) as i32
+}
+
+fn multiply_q15(value: i32, coefficient: i32) -> i32 {
+    (value * coefficient) >> 15
+}
+
 /// Runtime controls for the audio chain.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Parameters {
@@ -50,15 +66,16 @@ impl WhiteNoise {
         Self { state: seed.max(1) }
     }
 
-    fn next(&mut self) -> f32 {
+    fn next(&mut self) -> i32 {
         let mut x = self.state;
         x ^= x << 13;
         x ^= x >> 17;
         x ^= x << 5;
         self.state = x;
 
-        // The upper 24 bits fit exactly in an f32 mantissa.
-        (x >> 8) as f32 * (2.0 / 16_777_216.0) - 1.0
+        // Treat the PRNG word as signed, then retain its upper 13 bits. This
+        // gives a uniform Q12 value in [-1.0, 1.0).
+        (x as i32) >> (31 - SIGNAL_BITS)
     }
 }
 
@@ -66,81 +83,84 @@ impl WhiteNoise {
 #[derive(Clone, Copy, Debug)]
 struct ColoredNoise {
     white: WhiteNoise,
-    pink: [f32; 7],
-    brown: f32,
+    pink: [i32; 7],
+    brown: i32,
 }
 
 impl ColoredNoise {
     fn new(seed: u32) -> Self {
         Self {
             white: WhiteNoise::new(seed),
-            pink: [0.0; 7],
-            brown: 0.0,
+            pink: [0; 7],
+            brown: 0,
         }
     }
 
-    fn next(&mut self, color: f32) -> f32 {
+    fn next(&mut self, color_q15: i32) -> i32 {
         let white = self.white.next();
 
         // Paul Kellet's economical pink-noise approximation. The scale brings
         // its RMS level close enough to white for smooth color interpolation.
-        self.pink[0] = 0.99886 * self.pink[0] + white * 0.055_517_9;
-        self.pink[1] = 0.99332 * self.pink[1] + white * 0.075_075_9;
-        self.pink[2] = 0.96900 * self.pink[2] + white * 0.153_852_0;
-        self.pink[3] = 0.86650 * self.pink[3] + white * 0.310_485_6;
-        self.pink[4] = 0.55000 * self.pink[4] + white * 0.532_952_2;
-        self.pink[5] = -0.7616 * self.pink[5] - white * 0.016_898_0;
-        let pink = (self.pink[0]
+        self.pink[0] = multiply_q15(self.pink[0], 32_730) + multiply_q15(white, 1_819);
+        self.pink[1] = multiply_q15(self.pink[1], 32_549) + multiply_q15(white, 2_460);
+        self.pink[2] = multiply_q15(self.pink[2], 31_752) + multiply_q15(white, 5_041);
+        self.pink[3] = multiply_q15(self.pink[3], 28_393) + multiply_q15(white, 10_174);
+        self.pink[4] = multiply_q15(self.pink[4], 18_022) + multiply_q15(white, 17_464);
+        self.pink[5] = multiply_q15(self.pink[5], -24_956) + multiply_q15(white, -554);
+        let pink = self.pink[0]
             + self.pink[1]
             + self.pink[2]
             + self.pink[3]
             + self.pink[4]
             + self.pink[5]
             + self.pink[6]
-            + white * 0.5362)
-            * 0.11;
-        self.pink[6] = white * 0.115_926;
+            + multiply_q15(white, 17_570);
+        let pink = multiply_q15(pink, 3_604);
+        self.pink[6] = multiply_q15(white, 3_799);
 
         // A leaky random walk avoids unbounded DC drift.
-        self.brown = (self.brown + white * 0.02) / 1.02;
-        let brown = self.brown * 3.5;
+        self.brown = multiply_q15(self.brown, 32_125) + multiply_q15(white, 643);
+        let brown = self.brown * 7 / 2;
 
-        if color <= 1.0 {
-            white + (pink - white) * color
+        if color_q15 <= 32_768 {
+            white + multiply_q15(pink - white, color_q15)
         } else {
-            pink + (brown - pink) * (color - 1.0)
+            pink + multiply_q15(brown - pink, color_q15 - 32_768)
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct HighPass {
-    alpha: f32,
-    previous_input: f32,
-    previous_output: f32,
+    alpha: i32,
+    previous_input: i32,
+    previous_output: i32,
     bypassed: bool,
 }
 
 impl HighPass {
     fn new() -> Self {
         Self {
-            alpha: 0.0,
-            previous_input: 0.0,
-            previous_output: 0.0,
+            alpha: 0,
+            previous_input: 0,
+            previous_output: 0,
             bypassed: true,
         }
     }
 
     fn configure(&mut self, cutoff_hz: f32, sample_rate: u32) {
         self.bypassed = cutoff_hz <= 0.0;
-        self.alpha = 1.0 / (1.0 + TAU * cutoff_hz / sample_rate as f32);
+        self.alpha = to_q15(1.0 / (1.0 + TAU * cutoff_hz / sample_rate as f32));
     }
 
-    fn process(&mut self, input: f32) -> f32 {
+    fn process(&mut self, input: i32) -> i32 {
         let output = if self.bypassed {
             input
         } else {
-            self.alpha * (self.previous_output + input - self.previous_input)
+            multiply_q15(
+                self.previous_output + input - self.previous_input,
+                self.alpha,
+            )
         };
         self.previous_input = input;
         self.previous_output = output;
@@ -150,16 +170,16 @@ impl HighPass {
 
 #[derive(Clone, Copy, Debug)]
 struct LowPass {
-    alpha: f32,
-    output: f32,
+    alpha: i32,
+    output: i32,
     bypassed: bool,
 }
 
 impl LowPass {
     fn new() -> Self {
         Self {
-            alpha: 1.0,
-            output: 0.0,
+            alpha: 32_768,
+            output: 0,
             bypassed: true,
         }
     }
@@ -167,17 +187,17 @@ impl LowPass {
     fn configure(&mut self, cutoff_hz: f32, sample_rate: u32) {
         self.bypassed = cutoff_hz <= 0.0;
         self.alpha = if self.bypassed {
-            1.0
+            32_768
         } else {
-            1.0 / (1.0 + sample_rate as f32 / (TAU * cutoff_hz))
+            to_q15(1.0 / (1.0 + sample_rate as f32 / (TAU * cutoff_hz)))
         };
     }
 
-    fn process(&mut self, input: f32) -> f32 {
+    fn process(&mut self, input: i32) -> i32 {
         self.output = if self.bypassed {
             input
         } else {
-            self.output + self.alpha * (input - self.output)
+            self.output + multiply_q15(input - self.output, self.alpha)
         };
         self.output
     }
@@ -191,8 +211,10 @@ pub struct DspChain {
     noise: ColoredNoise,
     high_pass: HighPass,
     low_pass: LowPass,
-    gain: f32,
-    gain_smoothing: f32,
+    color_q15: i32,
+    gain: i32,
+    gain_target: i32,
+    gain_smoothing: i32,
 }
 
 impl DspChain {
@@ -204,10 +226,12 @@ impl DspChain {
             noise: ColoredNoise::new(seed),
             high_pass: HighPass::new(),
             low_pass: LowPass::new(),
+            color_q15: to_q15(parameters.color),
             // Starting at the requested gain avoids a fade from silence at boot.
-            gain: parameters.volume,
+            gain: to_q15(parameters.volume),
+            gain_target: to_q15(parameters.volume),
             // Reaches 99% of a gain change in roughly 10 ms at 48 kHz.
-            gain_smoothing: (460.0 / sample_rate as f32).clamp(0.0, 1.0),
+            gain_smoothing: to_q15((460.0 / sample_rate as f32).clamp(0.0, 1.0)),
         };
         chain.configure_filters();
         chain
@@ -219,17 +243,19 @@ impl DspChain {
 
     pub fn set_parameters(&mut self, parameters: Parameters) {
         self.parameters = parameters.sanitized(self.sample_rate);
+        self.color_q15 = to_q15(self.parameters.color);
+        self.gain_target = to_q15(self.parameters.volume);
         self.configure_filters();
     }
 
     /// Render one mono sample. Send the same value to both I2S slots.
     pub fn next_i16(&mut self) -> i16 {
-        let sample = self.noise.next(self.parameters.color);
+        let sample = self.noise.next(self.color_q15);
         let sample = self.high_pass.process(sample);
         let sample = self.low_pass.process(sample);
 
-        self.gain += self.gain_smoothing * (self.parameters.volume - self.gain);
-        float_to_i16(sample * self.gain)
+        self.gain += multiply_q15(self.gain_target - self.gain, self.gain_smoothing);
+        fixed_to_i16(multiply_q15(sample, self.gain))
     }
 
     pub fn fill_i16(&mut self, output: &mut [i16]) {
@@ -246,9 +272,9 @@ impl DspChain {
     }
 }
 
-fn float_to_i16(sample: f32) -> i16 {
-    let scaled = sample.clamp(-1.0, 1.0) * i16::MAX as f32;
-    scaled as i16
+fn fixed_to_i16(sample: i32) -> i16 {
+    let sample = sample.clamp(-SIGNAL_ONE, SIGNAL_ONE - 1);
+    (sample << (15 - SIGNAL_BITS)) as i16
 }
 
 #[cfg(test)]
@@ -295,20 +321,21 @@ mod tests {
 
     #[test]
     fn colors_become_progressively_smoother() {
-        fn roughness(color: f32) -> f64 {
+        fn roughness(color: f32) -> i64 {
             let mut noise = ColoredNoise::new(0x1234_5678);
-            let mut previous = 0.0_f32;
-            let mut sum = 0.0_f64;
+            let mut previous = 0;
+            let mut sum = 0_i64;
+            let color_q15 = to_q15(color);
 
             // Let the recursive filters settle before measuring sample-to-sample
             // energy, a useful proxy for high-frequency spectral content.
             for _ in 0..2_048 {
-                previous = noise.next(color);
+                previous = noise.next(color_q15);
             }
             for _ in 0..16_384 {
-                let current = noise.next(color);
-                let difference = current - previous;
-                sum += f64::from(difference * difference);
+                let current = noise.next(color_q15);
+                let difference = i64::from(current - previous);
+                sum += difference * difference;
                 previous = current;
             }
             sum
@@ -343,7 +370,7 @@ mod tests {
             let _ = chain.next_i16();
         }
 
-        assert!(chain.gain < 0.000_001);
+        assert_eq!(chain.gain, 0);
     }
 
     #[test]
@@ -351,12 +378,12 @@ mod tests {
         let mut filter = HighPass::new();
         filter.configure(100.0, 48_000);
 
-        let mut output = 0.0;
+        let mut output = 0;
         for _ in 0..10_000 {
-            output = filter.process(0.75);
+            output = filter.process(SIGNAL_ONE * 3 / 4);
         }
 
-        assert!(output.abs() < 0.000_1);
+        assert!(output.abs() <= 1);
     }
 
     #[test]
@@ -364,13 +391,13 @@ mod tests {
         let mut filter = LowPass::new();
         filter.configure(1_000.0, 48_000);
 
-        let first = filter.process(1.0);
+        let first = filter.process(SIGNAL_ONE);
         let mut settled = first;
         for _ in 0..1_000 {
-            settled = filter.process(1.0);
+            settled = filter.process(SIGNAL_ONE);
         }
 
-        assert!(first > 0.0 && first < 0.2);
-        assert!((settled - 1.0).abs() < 0.000_001);
+        assert!(first > 0 && first < SIGNAL_ONE / 5);
+        assert!((settled - SIGNAL_ONE).abs() <= 8);
     }
 }

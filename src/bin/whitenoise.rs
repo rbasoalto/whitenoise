@@ -17,6 +17,7 @@ use embassy_rp::usb::{Driver, InterruptHandler as UsbInterruptHandler};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
+use embassy_usb::Handler;
 use embassy_usb::UsbDevice;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
@@ -34,6 +35,7 @@ bind_interrupts!(struct Irqs {
 
 static PARAMETERS: Signal<CriticalSectionRawMutex, Parameters> = Signal::new();
 static I2S_PROGRAM: StaticCell<PioI2sOutProgram<'static, PIO0>> = StaticCell::new();
+static USB_LOGGER: StaticCell<UsbLogger> = StaticCell::new();
 
 type UsbDriver = Driver<'static, USB>;
 type Device = UsbDevice<'static, UsbDriver>;
@@ -85,6 +87,7 @@ async fn main(spawner: Spawner) {
         &mut [],
         CONTROL_BUFFER.init([0; 64]),
     );
+    builder.handler(USB_LOGGER.init(UsbLogger));
 
     static CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
     let mut serial = CdcAcmClass::new(&mut builder, CDC_STATE.init(State::new()), 64);
@@ -108,7 +111,32 @@ async fn heartbeat_task(pin: Peri<'static, PIN_25>) -> ! {
 
 #[embassy_executor::task]
 async fn usb_task(mut usb: Device) -> ! {
+    info!("USB device task started");
     usb.run().await
+}
+
+struct UsbLogger;
+
+impl Handler for UsbLogger {
+    fn enabled(&mut self, enabled: bool) {
+        info!("USB enabled: {}", enabled);
+    }
+
+    fn reset(&mut self) {
+        info!("USB bus reset");
+    }
+
+    fn addressed(&mut self, address: u8) {
+        info!("USB addressed: {}", address);
+    }
+
+    fn configured(&mut self, configured: bool) {
+        info!("USB configured: {}", configured);
+    }
+
+    fn suspended(&mut self, suspended: bool) {
+        info!("USB suspended: {}", suspended);
+    }
 }
 
 #[embassy_executor::task]
