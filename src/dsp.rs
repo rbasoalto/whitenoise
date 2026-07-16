@@ -33,16 +33,18 @@ pub struct Parameters {
 
 impl Default for Parameters {
     fn default() -> Self {
-        Self {
-            color: 1.0,
-            high_pass_hz: 80.0,
-            low_pass_hz: 14_000.0,
-            volume: 0.2,
-        }
+        Self::DEFAULT
     }
 }
 
 impl Parameters {
+    pub const DEFAULT: Self = Self {
+        color: 1.0,
+        high_pass_hz: 80.0,
+        low_pass_hz: 14_000.0,
+        volume: 0.2,
+    };
+
     /// Clamp controls to values the processing chain can represent.
     pub fn sanitized(mut self, sample_rate: u32) -> Self {
         let max_cutoff = sample_rate as f32 * 0.45;
