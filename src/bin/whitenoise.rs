@@ -271,7 +271,7 @@ fn apply_button_delta(delta: ControlDelta) {
 }
 
 async fn send_status(serial: &mut Serial, parameters: Parameters) -> Result<(), EndpointError> {
-    let mut response = ResponseBuffer::<64>::new();
+    let mut response = ResponseBuffer::<96>::new();
     let _ = protocol::write_parameters(&mut response, parameters);
     write_packets(serial, response.as_bytes()).await
 }

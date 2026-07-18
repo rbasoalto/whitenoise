@@ -39,6 +39,7 @@ required. Pico physical pin 8 is a nearby ground.
 
 - Short press: select the next or previous color; white, pink, and brown wrap.
 - Hold for 600 ms: change volume by 2 percentage points every 100 ms.
+- Hold both for 600 ms: toggle audio output on or off.
 - Debounce time: 30 ms.
 
 ## Toolchain
@@ -131,11 +132,14 @@ by a newline.
 | `hpf VALUE` | `off` or `0..21600` Hz |
 | `lpf VALUE` | `off` or `0..21600` Hz |
 | `volume VALUE` | `0..100` percent; `vol` is an alias |
+| `power VALUE` | `on`, `off`, or `toggle` |
 
 Color is continuous: `0` is white, `1` is pink, and `2` is brown.
+Power off smoothly mutes the digital output without changing the stored volume.
+The MAX98357A remains powered.
 
 Defaults:
 
 ```text
-color=1.000 hpf=80.0Hz lpf=14000.0Hz volume=20.0%
+power=on color=1.000 hpf=80.0Hz lpf=14000.0Hz volume=20.0%
 ```
