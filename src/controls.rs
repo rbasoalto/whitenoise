@@ -14,11 +14,12 @@ const COLORS: [f32; 3] = [0.0, 1.0, 2.0];
 pub struct ControlDelta {
     pub color_steps: i8,
     pub volume_steps: i8,
+    pub toggle_power: bool,
 }
 
 impl ControlDelta {
     pub const fn is_empty(self) -> bool {
-        self.color_steps == 0 && self.volume_steps == 0
+        self.color_steps == 0 && self.volume_steps == 0 && !self.toggle_power
     }
 }
 
@@ -82,12 +83,18 @@ impl Button {
             None
         }
     }
+
+    fn cancel(&mut self) {
+        *self = Self::new();
+    }
 }
 
 /// Converts two active-low button levels into semantic parameter changes.
 pub struct ButtonControls {
     next: Button,
     previous: Button,
+    chord: Button,
+    chord_triggered: bool,
 }
 
 impl ButtonControls {
@@ -95,11 +102,32 @@ impl ButtonControls {
         Self {
             next: Button::new(),
             previous: Button::new(),
+            chord: Button::new(),
+            chord_triggered: false,
         }
     }
 
     pub fn update(&mut self, next_pressed: bool, previous_pressed: bool) -> ControlDelta {
         let mut delta = ControlDelta::default();
+        let both_pressed = next_pressed && previous_pressed;
+        let chord_gesture = self.chord.update(both_pressed);
+
+        if !self.chord.stable_pressed {
+            self.chord_triggered = false;
+        }
+
+        // A chord owns both buttons from the first raw contact through its
+        // debounced release, preventing color or volume side effects.
+        if both_pressed || self.chord.stable_pressed {
+            self.next.cancel();
+            self.previous.cancel();
+            if chord_gesture == Some(Gesture::Hold) && !self.chord_triggered {
+                self.chord_triggered = true;
+                delta.toggle_power = true;
+            }
+            return delta;
+        }
+
         apply_gesture(self.next.update(next_pressed), 1, &mut delta);
         apply_gesture(self.previous.update(previous_pressed), -1, &mut delta);
         delta
@@ -129,6 +157,9 @@ pub fn apply_delta(parameters: &mut Parameters, delta: ControlDelta) -> bool {
     }
     parameters.volume =
         (parameters.volume + f32::from(delta.volume_steps) * VOLUME_STEP).clamp(0.0, 1.0);
+    if delta.toggle_power {
+        parameters.enabled = !parameters.enabled;
+    }
 
     *parameters != before
 }
@@ -165,6 +196,7 @@ mod tests {
             let delta = controls.update(next_pressed, previous_pressed);
             total.color_steps += delta.color_steps;
             total.volume_steps += delta.volume_steps;
+            total.toggle_power ^= delta.toggle_power;
         }
         total
     }
@@ -202,6 +234,20 @@ mod tests {
     }
 
     #[test]
+    fn holding_both_buttons_toggles_power_once_and_suppresses_other_actions() {
+        let mut controls = ButtonControls::new();
+        let held = poll(&mut controls, true, true, 100);
+
+        assert!(held.toggle_power);
+        assert_eq!(held.color_steps, 0);
+        assert_eq!(held.volume_steps, 0);
+        assert!(poll(&mut controls, true, true, 100).is_empty());
+        assert!(poll(&mut controls, false, false, 4).is_empty());
+
+        assert!(poll(&mut controls, true, true, 100).toggle_power);
+    }
+
+    #[test]
     fn colors_wrap_and_continuous_usb_values_join_the_palette() {
         let mut parameters = Parameters::default();
 
@@ -210,6 +256,7 @@ mod tests {
             ControlDelta {
                 color_steps: 1,
                 volume_steps: 0,
+                toggle_power: false,
             },
         );
         assert_eq!(parameters.color, 2.0);
@@ -218,6 +265,7 @@ mod tests {
             ControlDelta {
                 color_steps: 1,
                 volume_steps: 0,
+                toggle_power: false,
             },
         );
         assert_eq!(parameters.color, 0.0);
@@ -228,6 +276,7 @@ mod tests {
             ControlDelta {
                 color_steps: -1,
                 volume_steps: 0,
+                toggle_power: false,
             },
         );
         assert_eq!(parameters.color, 1.0);
@@ -245,6 +294,7 @@ mod tests {
             ControlDelta {
                 color_steps: 0,
                 volume_steps: 1,
+                toggle_power: false,
             }
         ));
         assert_eq!(parameters.volume, 1.0);
@@ -253,7 +303,24 @@ mod tests {
             ControlDelta {
                 color_steps: 0,
                 volume_steps: 1,
+                toggle_power: false,
             }
         ));
+    }
+
+    #[test]
+    fn power_toggle_preserves_volume() {
+        let mut parameters = Parameters::default();
+        let volume = parameters.volume;
+
+        assert!(apply_delta(
+            &mut parameters,
+            ControlDelta {
+                toggle_power: true,
+                ..ControlDelta::default()
+            }
+        ));
+        assert!(!parameters.enabled);
+        assert_eq!(parameters.volume, volume);
     }
 }

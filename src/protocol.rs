@@ -14,6 +14,14 @@ pub enum Command {
     LowPass(f32),
     /// Linear gain, normalized to `0.0..=1.0`.
     Volume(f32),
+    Power(PowerCommand),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerCommand {
+    On,
+    Off,
+    Toggle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +85,18 @@ pub fn parse_line(input: &[u8]) -> Result<Command, ParseError> {
         }
         return Ok(Command::Volume(percent / 100.0));
     }
+    if name.eq_ignore_ascii_case("power") {
+        let power = if value.eq_ignore_ascii_case("on") {
+            PowerCommand::On
+        } else if value.eq_ignore_ascii_case("off") {
+            PowerCommand::Off
+        } else if value.eq_ignore_ascii_case("toggle") {
+            PowerCommand::Toggle
+        } else {
+            return Err(ParseError::InvalidValue);
+        };
+        return Ok(Command::Power(power));
+    }
 
     Err(ParseError::UnknownCommand)
 }
@@ -89,6 +109,9 @@ impl Command {
             Self::HighPass(value) => parameters.high_pass_hz = value,
             Self::LowPass(value) => parameters.low_pass_hz = value,
             Self::Volume(value) => parameters.volume = value,
+            Self::Power(PowerCommand::On) => parameters.enabled = true,
+            Self::Power(PowerCommand::Off) => parameters.enabled = false,
+            Self::Power(PowerCommand::Toggle) => parameters.enabled = !parameters.enabled,
             Self::Help | Self::Get => return false,
         }
         true
@@ -99,7 +122,8 @@ impl Command {
 pub fn write_parameters(output: &mut impl Write, parameters: Parameters) -> fmt::Result {
     writeln!(
         output,
-        "color={:.3} hpf={:.1}Hz lpf={:.1}Hz volume={:.1}%",
+        "power={} color={:.3} hpf={:.1}Hz lpf={:.1}Hz volume={:.1}%",
+        if parameters.enabled { "on" } else { "off" },
         parameters.color,
         parameters.high_pass_hz,
         parameters.low_pass_hz,
@@ -112,7 +136,8 @@ pub const HELP: &str = "commands:\n\
   color white|pink|brown|0.0..2.0\n\
   hpf off|0..21600\n\
   lpf off|0..21600\n\
-  volume 0..100\n";
+  volume 0..100\n\
+  power on|off|toggle\n";
 
 fn parse_color(value: &str) -> Result<f32, ParseError> {
     let color = if value.eq_ignore_ascii_case("white") {
@@ -220,6 +245,14 @@ mod tests {
         assert_eq!(parse_line(b"hpf off"), Ok(Command::HighPass(0.0)));
         assert_eq!(parse_line(b"lpf 12000"), Ok(Command::LowPass(12_000.0)));
         assert_eq!(parse_line(b"vol 37.5"), Ok(Command::Volume(0.375)));
+        assert_eq!(
+            parse_line(b"power off"),
+            Ok(Command::Power(PowerCommand::Off))
+        );
+        assert_eq!(
+            parse_line(b"power toggle"),
+            Ok(Command::Power(PowerCommand::Toggle))
+        );
     }
 
     #[test]
@@ -228,6 +261,7 @@ mod tests {
         assert_eq!(parse_line(b"volume"), Err(ParseError::MissingValue));
         assert_eq!(parse_line(b"volume 101"), Err(ParseError::OutOfRange));
         assert_eq!(parse_line(b"color blue"), Err(ParseError::InvalidValue));
+        assert_eq!(parse_line(b"power maybe"), Err(ParseError::InvalidValue));
         assert_eq!(parse_line(b"get now"), Err(ParseError::ExtraArgument));
     }
 
@@ -236,8 +270,10 @@ mod tests {
         let mut parameters = Parameters::default();
         assert!(Command::Color(0.5).apply(&mut parameters));
         assert!(Command::Volume(0.75).apply(&mut parameters));
+        assert!(Command::Power(PowerCommand::Off).apply(&mut parameters));
         assert_eq!(parameters.color, 0.5);
         assert_eq!(parameters.volume, 0.75);
+        assert!(!parameters.enabled);
         assert!(!Command::Get.apply(&mut parameters));
     }
 
@@ -247,7 +283,7 @@ mod tests {
         write_parameters(&mut response, Parameters::default()).unwrap();
         assert_eq!(
             str::from_utf8(response.as_bytes()).unwrap(),
-            "color=1.000 hpf=80.0Hz lpf=14000.0Hz volume=20.0%\n"
+            "power=on color=1.000 hpf=80.0Hz lpf=14000.0Hz volume=20.0%\n"
         );
     }
 }

@@ -21,6 +21,8 @@ fn multiply_q15(value: i32, coefficient: i32) -> i32 {
 /// Runtime controls for the audio chain.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Parameters {
+    /// Whether audio output is enabled. Disabled output is smoothly muted.
+    pub enabled: bool,
     /// Spectral color: `0.0` is white, `1.0` pink, and `2.0` brown.
     pub color: f32,
     /// First-order high-pass cutoff in hertz. Zero bypasses the block.
@@ -39,6 +41,7 @@ impl Default for Parameters {
 
 impl Parameters {
     pub const DEFAULT: Self = Self {
+        enabled: true,
         color: 1.0,
         high_pass_hz: 80.0,
         low_pass_hz: 14_000.0,
@@ -230,8 +233,8 @@ impl DspChain {
             low_pass: LowPass::new(),
             color_q15: to_q15(parameters.color),
             // Starting at the requested gain avoids a fade from silence at boot.
-            gain: to_q15(parameters.volume),
-            gain_target: to_q15(parameters.volume),
+            gain: to_q15(effective_volume(parameters)),
+            gain_target: to_q15(effective_volume(parameters)),
             // Reaches 99% of a gain change in roughly 10 ms at 48 kHz.
             gain_smoothing: to_q15((460.0 / sample_rate as f32).clamp(0.0, 1.0)),
         };
@@ -246,7 +249,7 @@ impl DspChain {
     pub fn set_parameters(&mut self, parameters: Parameters) {
         self.parameters = parameters.sanitized(self.sample_rate);
         self.color_q15 = to_q15(self.parameters.color);
-        self.gain_target = to_q15(self.parameters.volume);
+        self.gain_target = to_q15(effective_volume(self.parameters));
         self.configure_filters();
     }
 
@@ -274,6 +277,14 @@ impl DspChain {
     }
 }
 
+fn effective_volume(parameters: Parameters) -> f32 {
+    if parameters.enabled {
+        parameters.volume
+    } else {
+        0.0
+    }
+}
+
 fn fixed_to_i16(sample: i32) -> i16 {
     let sample = sample.clamp(-SIGNAL_ONE, SIGNAL_ONE - 1);
     (sample << (15 - SIGNAL_BITS)) as i16
@@ -286,6 +297,7 @@ mod tests {
     #[test]
     fn parameters_are_sanitized() {
         let parameters = Parameters {
+            enabled: true,
             color: 4.0,
             high_pass_hz: -10.0,
             low_pass_hz: 40_000.0,
@@ -302,6 +314,7 @@ mod tests {
     #[test]
     fn output_is_deterministic_and_not_silent() {
         let parameters = Parameters {
+            enabled: true,
             color: 0.0,
             high_pass_hz: 0.0,
             low_pass_hz: 0.0,
@@ -357,6 +370,7 @@ mod tests {
             48_000,
             7,
             Parameters {
+                enabled: true,
                 color: 2.0,
                 high_pass_hz: 0.0,
                 low_pass_hz: 0.0,
@@ -373,6 +387,28 @@ mod tests {
         }
 
         assert_eq!(chain.gain, 0);
+    }
+
+    #[test]
+    fn disabled_output_mutes_without_forgetting_volume() {
+        let mut chain = DspChain::new(48_000, 7, Parameters::default());
+        chain.set_parameters(Parameters {
+            enabled: false,
+            ..chain.parameters()
+        });
+
+        for _ in 0..2_000 {
+            let _ = chain.next_i16();
+        }
+
+        assert_eq!(chain.gain, 0);
+        assert_eq!(chain.parameters.volume, Parameters::DEFAULT.volume);
+
+        chain.set_parameters(Parameters {
+            enabled: true,
+            ..chain.parameters()
+        });
+        assert_eq!(chain.gain_target, to_q15(Parameters::DEFAULT.volume));
     }
 
     #[test]
